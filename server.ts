@@ -1,19 +1,21 @@
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI } from '@google/genai';
-import { CREATIVE_MODES, MOODS, PALETTES, ArtFormData, ReversePromptResult } from './types.ts';
+import { CREATIVE_MODES, MOODS, PALETTES } from './types.ts';
+import type { ArtFormData, ReversePromptResult } from './types.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-// Must run on port 3000 as specified in environment_constraints
+// Listen on process.env.PORT in production (Cloud Run) or command line --port in development (3000)
 const portArgIndex = process.argv.indexOf('--port');
 const PORT = portArgIndex !== -1 && process.argv[portArgIndex + 1] 
   ? Number(process.argv[portArgIndex + 1]) 
-  : 3000;
+  : (process.env.PORT ? Number(process.env.PORT) : 3000);
 
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
@@ -434,7 +436,10 @@ Responde directamente sin saludos ni introducciones.`;
 
 // --- CLIENT / STATIC SERVING ---
 async function startServer() {
-  const isProd = process.env.NODE_ENV === 'production';
+  const distPath = path.resolve(__dirname, 'dist');
+  const hasDist = fs.existsSync(path.join(distPath, 'index.html'));
+  const isProd = process.env.NODE_ENV === 'production' || hasDist;
+
   if (!isProd) {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
@@ -443,9 +448,8 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.resolve(__dirname, 'dist');
     app.use(express.static(distPath));
-    app.get('*', (_req, res) => {
+    app.use((_req, res) => {
       res.sendFile(path.resolve(distPath, 'index.html'));
     });
   }
