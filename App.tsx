@@ -3,7 +3,7 @@ import {
   Palette, Download, Share2, RefreshCw, Wand2, Info, Save, Shirt, Eye, EyeOff, 
   History, Sparkles, Layers, Armchair, Building2, LayoutGrid, CheckCircle2, 
   Camera, Brush, Trash2, ZoomIn, Copy, Check, SlidersHorizontal, ChevronRight,
-  Maximize2, X, Lightbulb, Compass, FileCode, FileText, Smartphone, Scan
+  Maximize2, X, Lightbulb, Compass, FileCode, FileText, Smartphone, Scan, Cpu
 } from 'lucide-react';
 import { 
   ArtFormData, CREATIVE_MODES, GalleryItem, MOODS, PALETTES, CreativeMode,
@@ -13,12 +13,14 @@ import {
   MultiSelect, DimensionInput, ImageUpload, VectorToggle, InfoModal 
 } from './components/FormComponents';
 import { 
-  generateArtImage, generateVectorSvg, getTermDefinition, createEnhancedPrompt 
+  generateArtImage, generateVectorSvg, getTermDefinition, createEnhancedPrompt,
+  getStoredGroqKey
 } from './services/geminiService';
 import { PWAInstallButton } from './components/PWAInstallButton';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { ReversePromptModal } from './components/ReversePromptModal';
 import { DossierModal } from './components/DossierModal';
+import { GroqConfigModal } from './components/GroqConfigModal';
 
 const getDepartmentIcon = (id: string) => {
   switch (id) {
@@ -144,6 +146,14 @@ export const App: React.FC = () => {
   // Dossier / Technical Sheet Modal
   const [dossierOpen, setDossierOpen] = useState(false);
   const [dossierItem, setDossierItem] = useState<GalleryItem | null>(null);
+
+  // Groq AI Key & Engine Modal
+  const [groqModalOpen, setGroqModalOpen] = useState(false);
+  const [hasGroqKey, setHasGroqKey] = useState(false);
+
+  useEffect(() => {
+    setHasGroqKey(Boolean(getStoredGroqKey()));
+  }, []);
 
   // Active department object
   const currentMode: CreativeMode = useMemo(() => {
@@ -511,6 +521,25 @@ export const App: React.FC = () => {
               <Scan size={15} className="text-amber-600" />
               <span className="hidden md:inline">Ingeniería Inversa</span>
               <span className="inline md:hidden">Prompt IA</span>
+            </button>
+
+            <button
+              id="header-groq-key-btn"
+              onClick={() => setGroqModalOpen(true)}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition shadow-xs border ${
+                hasGroqKey
+                  ? 'bg-amber-500/10 text-amber-900 border-amber-400/80 hover:bg-amber-500/20'
+                  : 'bg-stone-100 hover:bg-stone-200/80 text-stone-700 border-stone-200'
+              }`}
+              title="Añadir clave API de Groq (aceleración ultra-rápida Llama 3.3)"
+            >
+              <Cpu size={15} className={hasGroqKey ? 'text-amber-600' : 'text-stone-500'} />
+              <span className="hidden sm:inline">Groq</span>
+              {hasGroqKey ? (
+                <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" title="Groq Conectado"></span>
+              ) : (
+                <span className="text-[10px] text-stone-500 font-normal hidden lg:inline">+ Key</span>
+              )}
             </button>
 
             <PWAInstallButton />
@@ -1248,6 +1277,16 @@ export const App: React.FC = () => {
         isOpen={dossierOpen}
         onClose={() => setDossierOpen(false)}
         item={dossierItem}
+      />
+
+      {/* Groq Engine & Key Configuration Modal */}
+      <GroqConfigModal
+        isOpen={groqModalOpen}
+        onClose={() => setGroqModalOpen(false)}
+        onKeyUpdated={() => {
+          setHasGroqKey(Boolean(getStoredGroqKey()));
+          showToast("Configuración de Groq actualizada");
+        }}
       />
     </div>
   );

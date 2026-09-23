@@ -23,6 +23,42 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 const getApiKey = () => process.env.GEMINI_API_KEY || process.env.API_KEY || '';
 
+const getGroqKey = (req?: express.Request): string => {
+  const headerKey = req?.headers['x-groq-key'];
+  if (typeof headerKey === 'string' && headerKey.trim()) {
+    return headerKey.trim();
+  }
+  return process.env.GROQ_API_KEY || '';
+};
+
+async function callGroqChat(
+  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
+  apiKey: string,
+  model = 'llama-3.3-70b-versatile'
+): Promise<string> {
+  const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model,
+      messages,
+      temperature: 0.7,
+      max_tokens: 4096,
+    }),
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Groq API error (${response.status}): ${errText}`);
+  }
+
+  const data = await response.json();
+  return data.choices?.[0]?.message?.content || '';
+}
+
 const getAiClient = () => {
   const apiKey = getApiKey();
   return new GoogleGenAI({ apiKey });
@@ -115,6 +151,39 @@ const buildPromptText = (formData: ArtFormData): string => {
 
 // --- API ENDPOINTS ---
 
+// 0. GROQ CONFIG & VALIDATION
+app.get('/api/groq-status', (req, res) => {
+  const key = getGroqKey(req);
+  res.json({
+    configured: Boolean(key),
+    model: 'llama-3.3-70b-versatile',
+    source: req.headers['x-groq-key'] ? 'client' : (process.env.GROQ_API_KEY ? 'server' : 'none'),
+  });
+});
+
+app.post('/api/validate-groq-key', async (req, res) => {
+  try {
+    const key = (req.body?.key as string) || getGroqKey(req);
+    if (!key) {
+      res.status(400).json({ valid: false, message: 'No se ha proporcionado ninguna clave de Groq.' });
+      return;
+    }
+    const ping = await callGroqChat(
+      [{ role: 'user', content: 'Di únicamente "CONECTADO".' }],
+      key,
+      'llama-3.3-70b-versatile'
+    );
+    res.json({
+      valid: true,
+      message: 'Clave de Groq validada con éxito.',
+      model: 'llama-3.3-70b-versatile',
+      response: ping.trim(),
+    });
+  } catch (err: any) {
+    res.status(400).json({ valid: false, message: err?.message || 'Error al validar la clave de Groq.' });
+  }
+});
+
 // 1. GENERATE VECTOR SVG
 app.post('/api/generate-svg', async (req, res) => {
   try {
@@ -131,6 +200,29 @@ REGLAS ESTRICTAS DE SALIDA:
 - NO incluyas formato Markdown (sin \`\`\`xml o \`\`\`), ni introducciones, ni comentarios antes o después.
 - Añade viewBox="0 0 ${formData.width || '1024'} ${formData.height || '1024'}" y xmlns="http://www.w3.org/2000/svg".
 - Utiliza gradientes (<linearGradient>, <radialGradient>), sombras (<filter>), capas, máscaras y trazados (<path>) complejos para lograr volumen, texturas y luces espectaculares.`;
+
+    // Si el usuario configuró clave de Groq, intentar primero con Llama 3.3
+    const groqKey = getGroqKey(req);
+    if (groqKey) {
+      try {
+        const groqRaw = await callGroqChat(
+          [
+            { role: 'system', content: 'Eres un diseñador experto en gráficos vectoriales SVG. Genera exclusivamente código XML SVG puro, sin formato markdown ni introducciones.' },
+            { role: 'user', content: svgPrompt }
+          ],
+          groqKey
+        );
+        const cleaned = groqRaw.replace(/```xml/gi, '').replace(/```svg/gi, '').replace(/```/g, '').trim();
+        const start = cleaned.indexOf('<svg');
+        const end = cleaned.lastIndexOf('</svg>');
+        if (start !== -1 && end !== -1 && end > start) {
+          res.json({ svg: cleaned.substring(start, end + 6), engine: 'groq (llama-3.3-70b)' });
+          return;
+        }
+      } catch (groqErr) {
+        console.warn('Groq SVG falló, continuando con Gemini:', groqErr);
+      }
+    }
 
     const textModels = ['gemini-3.6-flash', 'gemini-3.1-flash-lite', 'gemini-3.8-flash'];
 
@@ -156,7 +248,7 @@ REGLAS ESTRICTAS DE SALIDA:
       'Generación SVG'
     );
 
-    res.json({ svg: svgCode });
+    res.json({ svg: svgCode, engine: 'gemini' });
   } catch (error: any) {
     console.error('Error in /api/generate-svg:', error);
     res.status(500).json({ 
@@ -381,6 +473,27 @@ Detalla:
 
 Responde ÚNICAMENTE con el texto del prompt listo para usar, sin introducciones, sin prefijos ("Prompt:"), sin comillas, sin explicaciones ni saludos.`;
 
+    // Si el usuario proporcionó clave de Groq, intentar primero aceleración con Llama 3.3
+    const groqKey = getGroqKey(req);
+    if (groqKey) {
+      try {
+        const groqEnhanced = await callGroqChat(
+          [
+            { role: 'system', content: 'Eres un curador y director técnico de arte senior. Genera exclusivamente el texto final del Master Prompt optimizado en español, sin preámbulos ni comillas.' },
+            { role: 'user', content: prompt }
+          ],
+          groqKey
+        );
+        const cleaned = groqEnhanced.trim().replace(/^["']|["']$/g, '');
+        if (cleaned.length > 20) {
+          res.json({ enhancedPrompt: cleaned, engine: 'groq (llama-3.3-70b)' });
+          return;
+        }
+      } catch (groqErr) {
+        console.warn('Groq enhance-prompt falló, continuando con Gemini:', groqErr);
+      }
+    }
+
     const textModels = ['gemini-3.6-flash', 'gemini-3.1-flash-lite', 'gemini-3.8-flash'];
 
     const enhanced = await executeWithModelFallback(
@@ -397,7 +510,7 @@ Responde ÚNICAMENTE con el texto del prompt listo para usar, sin introducciones
       'Mejora de Prompt'
     );
 
-    res.json({ enhancedPrompt: enhanced });
+    res.json({ enhancedPrompt: enhanced, engine: 'gemini' });
   } catch (error: any) {
     console.error('Error in /api/enhance-prompt:', error);
     res.status(500).json({ error: 'ENHANCE_PROMPT_FAILED', message: error?.message || 'Error al enriquecer el prompt.' });
@@ -413,6 +526,25 @@ Proporciona una definición concisa, clara y académica de 2 a 3 frases en espa�
 Enfócate en cómo influye visualmente y cómo se aplica en un proyecto real.
 Responde directamente sin saludos ni introducciones.`;
 
+    const groqKey = getGroqKey(req);
+    if (groqKey) {
+      try {
+        const groqDef = await callGroqChat(
+          [
+            { role: 'system', content: 'Eres un profesor y enciclopedista de arte y arquitectura. Explica conceptos técnicos de forma académica y directa.' },
+            { role: 'user', content: prompt }
+          ],
+          groqKey
+        );
+        if (groqDef && groqDef.trim().length > 10) {
+          res.json({ definition: groqDef.trim(), engine: 'groq (llama-3.3-70b)' });
+          return;
+        }
+      } catch (groqErr) {
+        console.warn('Groq term-definition falló, continuando con Gemini:', groqErr);
+      }
+    }
+
     const textModels = ['gemini-3.6-flash', 'gemini-3.1-flash-lite', 'gemini-3.8-flash'];
 
     const definition = await executeWithModelFallback(
@@ -427,7 +559,7 @@ Responde directamente sin saludos ni introducciones.`;
       'Definición de Término'
     );
 
-    res.json({ definition });
+    res.json({ definition, engine: 'gemini' });
   } catch (error: any) {
     console.error('Error in /api/term-definition:', error);
     res.status(500).json({ error: 'TERM_DEF_FAILED', message: error?.message || 'Error al obtener definición.' });
@@ -436,11 +568,12 @@ Responde directamente sin saludos ni introducciones.`;
 
 // --- CLIENT / STATIC SERVING ---
 async function startServer() {
+  const isProd = process.env.NODE_ENV === 'production';
   const distPath = path.resolve(__dirname, 'dist');
-  const hasDist = fs.existsSync(path.join(distPath, 'index.html'));
-  const isProd = process.env.NODE_ENV === 'production' || hasDist;
+  const indexHtmlPath = path.join(distPath, 'index.html');
 
   if (!isProd) {
+    // En desarrollo siempre montamos los middlewares de Vite
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -448,9 +581,29 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
+    // En producción, asegurar que dist/index.html exista
+    if (!fs.existsSync(indexHtmlPath)) {
+      console.log('dist/index.html no encontrado en producción. Compilando cliente...');
+      try {
+        const { execSync } = await import('child_process');
+        execSync('npx vite build', { stdio: 'inherit' });
+      } catch (err) {
+        console.error('Error al compilar automáticamente con Vite:', err);
+      }
+    }
+
     app.use(express.static(distPath));
     app.use((_req, res) => {
-      res.sendFile(path.resolve(distPath, 'index.html'));
+      if (fs.existsSync(indexHtmlPath)) {
+        res.sendFile(indexHtmlPath);
+      } else {
+        const rootIndex = path.resolve(__dirname, 'index.html');
+        if (fs.existsSync(rootIndex)) {
+          res.sendFile(rootIndex);
+        } else {
+          res.status(500).send('Error: dist/index.html no encontrado.');
+        }
+      }
     });
   }
 

@@ -1,9 +1,60 @@
 import { ArtFormData, ReversePromptResult } from "../types";
 
+export const getStoredGroqKey = (): string => {
+  try {
+    return localStorage.getItem('artgen_groq_key') || '';
+  } catch {
+    return '';
+  }
+};
+
+export const setStoredGroqKey = (key: string): void => {
+  try {
+    if (key.trim()) {
+      localStorage.setItem('artgen_groq_key', key.trim());
+    } else {
+      localStorage.removeItem('artgen_groq_key');
+    }
+  } catch (e) {
+    console.warn('Error saving Groq key in localStorage:', e);
+  }
+};
+
+const getCommonHeaders = (): Record<string, string> => {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json'
+  };
+  const groqKey = getStoredGroqKey();
+  if (groqKey) {
+    headers['x-groq-key'] = groqKey;
+  }
+  return headers;
+};
+
+export const checkGroqStatus = async (): Promise<{ configured: boolean; model: string; source: string }> => {
+  try {
+    const response = await fetch('/api/groq-status', {
+      headers: getCommonHeaders()
+    });
+    return await response.json();
+  } catch {
+    return { configured: false, model: 'llama-3.3-70b-versatile', source: 'none' };
+  }
+};
+
+export const validateGroqKey = async (key: string): Promise<{ valid: boolean; message: string; model?: string }> => {
+  const response = await fetch('/api/validate-groq-key', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key })
+  });
+  return await response.json();
+};
+
 export const generateArtImage = async (formData: ArtFormData): Promise<string> => {
   const response = await fetch('/api/generate-image', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: getCommonHeaders(),
     body: JSON.stringify(formData)
   });
 
@@ -26,7 +77,7 @@ export const generateArtImage = async (formData: ArtFormData): Promise<string> =
 export const generateVectorSvg = async (formData: ArtFormData): Promise<string> => {
   const response = await fetch('/api/generate-svg', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: getCommonHeaders(),
     body: JSON.stringify(formData)
   });
 
@@ -47,7 +98,7 @@ export const getTermDefinition = async (term: string, category: string): Promise
   try {
     const response = await fetch('/api/term-definition', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getCommonHeaders(),
       body: JSON.stringify({ term, category })
     });
 
@@ -67,7 +118,7 @@ export const reverseEngineerImageToPrompt = async (
 ): Promise<ReversePromptResult> => {
   const response = await fetch('/api/reverse-prompt', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: getCommonHeaders(),
     body: JSON.stringify({ imageBase64 })
   });
 
@@ -87,7 +138,7 @@ export const createEnhancedPrompt = async (
 ): Promise<string> => {
   const response = await fetch('/api/enhance-prompt', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: getCommonHeaders(),
     body: JSON.stringify({ baseConcept, modeId, selectedAttributes })
   });
 
